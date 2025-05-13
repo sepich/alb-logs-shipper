@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,31 +23,45 @@ type Options struct {
 	LokiURL      string
 	LokiUser     string
 	LokiPassword string
+	Labels       map[string]string
+}
+
+// stringSliceFlag implements flag.Value
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string {
+	return fmt.Sprintf("%v", *s)
+}
+
+func (s *stringSliceFlag) Set(value string) error {
+	*s = append(*s, value)
+	return nil
 }
 
 func main() {
 	var opts Options
-	var LogLevel string
+	var logLevel string
+	var labels stringSliceFlag
+	opts.Labels = make(map[string]string)
 	flag.StringVar(&opts.BucketName, "bucket-name", "", "Name of the S3 bucket with ALB logs (required)")
 	flag.DurationVar(&opts.WaitInterval, "wait", 60*time.Second, "Interval to wait between runs")
 	flag.StringVar(&opts.LokiURL, "loki-url", "", "URL to Loki API (required)")
 	flag.StringVar(&opts.LokiUser, "loki-user", "", "User to use for Loki authentication")
-	flag.StringVar(&LogLevel, "log-level", "info", "Log level (info, debug)")
+	flag.StringVar(&logLevel, "log-level", "info", "Log level (info, debug)")
+	flag.Var(&labels, "label", "Label to add to Loki stream, can be specified multiple times (key=value)")
 	flag.Parse()
 
 	logger := log.NewLogfmtLogger(os.Stdout)
-	logger = level.NewFilter(logger, level.Allow(level.ParseDefault(LogLevel, level.InfoValue())))
+	logger = level.NewFilter(logger, level.Allow(level.ParseDefault(logLevel, level.InfoValue())))
 	logger = log.With(logger, "caller", log.DefaultCaller)
 
 	if opts.BucketName == "" {
 		level.Error(logger).Log("msg", "--bucket-name is required")
-		flag.Usage()
 		os.Exit(1)
 	}
 
 	if opts.LokiURL == "" {
 		level.Error(logger).Log("msg", "--loki-url is required")
-		flag.Usage()
 		os.Exit(1)
 	}
 
@@ -54,6 +70,15 @@ func main() {
 		os.Exit(1)
 	}
 	opts.LokiPassword = os.Getenv("LOKI_PASSWORD")
+
+	for _, label := range labels {
+		parts := strings.SplitN(label, "=", 2)
+		if len(parts) < 2 || len(parts[0]) == 0 || len(parts[1]) == 0 {
+			level.Error(logger).Log("msg", "invalid label format (k=v)", "label", label)
+			os.Exit(1)
+		}
+		opts.Labels[parts[0]] = parts[1]
+	}
 
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
@@ -64,7 +89,7 @@ func main() {
 	s3Client := s3.NewFromConfig(cfg)
 	elbClient := elasticloadbalancingv2.NewFromConfig(cfg)
 	elbMeta := NewELBMeta(elbClient)
-	shipper := NewShipper(opts, elbMeta, s3Client, logger)
+	parser := NewParser(opts, elbMeta, s3Client, logger)
 
 	sgnl := make(chan os.Signal, 1)
 	signal.Notify(sgnl, syscall.SIGINT, syscall.SIGTERM)
@@ -74,7 +99,7 @@ func main() {
 	for {
 		select {
 		case <-waitTimer.C:
-			if err := shipper.run(); err != nil {
+			if err := parser.run(); err != nil {
 				level.Error(logger).Log("msg", "run failed", "err", err)
 				os.Exit(1)
 			}
