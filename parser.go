@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -18,8 +19,34 @@ var (
 	// source:  https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-access-logs.html#access-log-file-format
 	// format:  bucket[/prefix]/AWSLogs/aws-account-id/elasticloadbalancing/region/yyyy/mm/dd/aws-account-id_elasticloadbalancing_region_app.load-balancer-id_end-time_ip-address_random-string.log.gz
 	// example: my-bucket/AWSLogs/123456789012/elasticloadbalancing/us-east-1/2022/01/24/123456789012_elasticloadbalancing_us-east-1_app.my-loadbalancer.b13ea9d19f16d015_20220124T0000Z_0.0.0.0_2et2e1mx.log.gz
-	fnRegex = regexp.MustCompile(`AWSLogs\/(?P<account_id>\d+)\/elasticloadbalancing\/(?P<region>[\w-]+)\/(?P<year>\d+)\/(?P<month>\d+)\/(?P<day>\d+)\/\d+\_elasticloadbalancing_(?:\w+-\w+-(?:\w+-)?\d)_app\.(?P<id>[a-zA-Z0-9\-]+)\..+\.log\.gz`)
-	tsRegex = regexp.MustCompile(`(?P<timestamp>\d+-\d+-\d+T\d+:\d+:\d+(?:\.\d+Z)?)`)
+	fnRegex    = regexp.MustCompile(`AWSLogs\/(?P<account_id>\d+)\/elasticloadbalancing\/(?P<region>[\w-]+)\/(?P<year>\d+)\/(?P<month>\d+)\/(?P<day>\d+)\/\d+\_elasticloadbalancing_(?:\w+-\w+-(?:\w+-)?\d)_app\.(?P<id>[a-zA-Z0-9\-]+)\..+\.log\.gz`)
+	tsRegex    = regexp.MustCompile(`(?P<timestamp>\d+-\d+-\d+T\d+:\d+:\d+(?:\.\d+Z)?)`)
+	evRegex    = regexp.MustCompile(`(?P<type>\S+) (?P<time>\S+) (?P<elb>\S+) (?P<client>\S+) (?P<target>\S+) (?P<request_processing_time>\S+) (?P<target_processing_time>\S+) (?P<response_processing_time>\S+) (?P<elb_status_code>\S+) (?P<target_status_code>\S+) (?P<received_bytes>\S+) (?P<sent_bytes>\S+) "(?P<request>.+)" "(?P<user_agent>.+)" (?P<ssl_cipher>\S+) (?P<ssl_protocol>\S+) (?P<target_group_arn>\S+) "(?P<trace_id>.+)" "(?P<domain_name>.+)" "(?P<chosen_cert_arn>.+)" (?P<matched_rule_priority>\S+) (?P<request_creation_time>\S+) "(?P<actions_executed>.+)" "(?P<redirect_url>.+)" "(?P<error_reason>.+)" "(?P<targets>.+)" "(?P<target_status_code_list>.+)" "(?P<classification>.+)" "(?P<classification_reason>.+)" (?P<conn_trace_id>\S+)`)
+	skipFields = map[string]bool{
+		"chosen_cert_arn":         true, // hardcoded in ingress
+		"target_group_arn":        true, // not configured directly
+		"matched_rule_priority":   true, // not configured directly
+		"error_reason":            true, // only for lambda
+		"targets":                 true, // same as target
+		"target_status_code_list": true, // same as target_status_code
+		"classification":          true, // not used
+		"classification_reason":   true, // not used
+		"conn_trace_id":           true, // only for connection logs
+	}
+	quoteFields = map[string]bool{
+		"request":                 true,
+		"user_agent":              true,
+		"trace_id":                true,
+		"domain_name":             true,
+		"chosen_cert_arn":         true,
+		"actions_executed":        true,
+		"redirect_url":            true,
+		"error_reason":            true,
+		"targets":                 true,
+		"target_status_code_list": true,
+		"classification":          true,
+		"classification_reason":   true,
+	}
 )
 
 type Parser struct {
@@ -126,6 +153,9 @@ func (s *Parser) parseFile(ctx context.Context, fn string, lb string) error {
 			level.Error(s.logger).Log("msg", "skipping log line with invalid timestamp", "line", logLine, "err", err)
 			continue
 		}
+		if s.opts.LogFmt {
+			logLine = toLogfmt(logLine)
+		}
 		if err = b.add(timestamp, logLine); err != nil {
 			return fmt.Errorf("failed to send batch: %w", err)
 		}
@@ -137,4 +167,25 @@ func (s *Parser) parseFile(ctx context.Context, fn string, lb string) error {
 		return fmt.Errorf("failed to flush batch: %w", err)
 	}
 	return nil
+}
+
+// toLogfmt converts a ALB log line to logfmt format
+func toLogfmt(line string) string {
+	matches := evRegex.FindStringSubmatch(line)
+	if len(matches) == 0 { // TODO
+		fmt.Println("failed to parse log line:", line)
+		os.Exit(1)
+	}
+	res := []string{}
+	for i, name := range evRegex.SubexpNames()[1:] {
+		if skipFields[name] {
+			continue // drop non relevant for EKS ALB
+		}
+		if quoteFields[name] {
+			res = append(res, fmt.Sprintf("%s=%q", name, matches[i+1]))
+		} else {
+			res = append(res, fmt.Sprintf("%s=%s", name, matches[i+1]))
+		}
+	}
+	return strings.Join(res, " ")
 }

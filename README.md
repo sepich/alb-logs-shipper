@@ -23,7 +23,10 @@ Yet another ALB S3 logs shipper to Loki. This one mostly targeted for an EKS use
           "s3:GetObject",
           "s3:DeleteObject"
         ],
-        "Resource": "arn:aws:s3:::${aws_s3_bucket.alb_logs.id}/*"
+        "Resource": [
+          "arn:aws:s3:::${aws_s3_bucket.alb_logs.id}",
+          "arn:aws:s3:::${aws_s3_bucket.alb_logs.id}/*"
+        ]
       },
       {
         "Effect": "Allow",
@@ -65,6 +68,8 @@ https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balance
 It is possible to ship logs from ALB in aws account `A` to S3 bucket in account `B`. So, in multicluster multiaccount setup it is possible to have the same annotation in Ingress objects to ship logs to the same S3 bucket.
 - Unfortunately, ALB only ships to bucket in the same region, so this would need at least a bucket-per-region.
 - From log filename we can get source `account-id` and `loadbalancer-id`. But then, to get ALB tags, we would need a per-account list of IAM roles to do `AssumeRole`
+
+So for now it is bucket-per-awsaccount mode, where multiple clusters in the same account are distinguished by `cluster-id` tag on ALB.
 
 ### Lambda mode  
 There are pros and cons for running this as a lambda:
