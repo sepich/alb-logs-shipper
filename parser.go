@@ -61,8 +61,8 @@ func (s *Parser) run() error {
 			continue
 		}
 		if err := s.parseFile(ctx, *obj.Key, matches[fnRegex.SubexpIndex("id")]); err != nil {
-			level.Error(s.logger).Log("msg", "failed to parse file", "key", *obj.Key, "err", err)
-			continue
+			level.Error(s.logger).Log("msg", "failed to ship file", "key", *obj.Key, "err", err)
+			os.Exit(1) // pod restart instead of deletion of not-shipped file
 		}
 
 		if _, err := s.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
@@ -82,17 +82,20 @@ func (s *Parser) parseFile(ctx context.Context, fn string, lb string) error {
 	if err != nil {
 		return fmt.Errorf("failed to get metadata for load balancer %s: %w", lb, err)
 	}
-	level.Debug(s.logger).Log("msg", "processing log file", "key", fn, "namespace", meta.Namespace, "ingress", meta.Ingress)
-	labels := make(map[string]string)
-	labels["namespace"] = meta.Namespace
-	labels["ingress"] = meta.Ingress
-	labels["stream"] = "alb"
+	labels := map[string]string{
+		"namespace": meta.Namespace,
+		"ingress":   meta.Ingress,
+		"stream":    "alb",
+	}
 	for k, v := range s.opts.Labels {
 		labels[k] = v
 		if k == "cluster" {
 			labels["index"] = v + "-" + meta.Namespace
 		}
 	}
+	level.Debug(s.logger).Log("msg", "processing log file", "key", fn, "labels", fmt.Sprintf("%v", labels))
+	b := newBatch(labels, s.opts, &s.logger)
+
 	obj, err := s.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: &s.opts.BucketName,
 		Key:    &fn,
@@ -113,8 +116,6 @@ func (s *Parser) parseFile(ctx context.Context, fn string, lb string) error {
 	for scanner.Scan() {
 		lineCount++
 		logLine := scanner.Text()
-		level.Debug(s.logger).Log("msg", logLine)
-
 		matches := tsRegex.FindStringSubmatch(logLine)
 		if len(matches) == 0 {
 			level.Error(s.logger).Log("msg", "skipping log line without a timestamp", "line", logLine)
@@ -125,11 +126,15 @@ func (s *Parser) parseFile(ctx context.Context, fn string, lb string) error {
 			level.Error(s.logger).Log("msg", "skipping log line with invalid timestamp", "line", logLine, "err", err)
 			continue
 		}
-		level.Debug(s.logger).Log("msg", "processing log line", "timestamp", timestamp)
+		if err = b.add(timestamp, logLine); err != nil {
+			return fmt.Errorf("failed to send batch: %w", err)
+		}
 	}
-	if err := scanner.Err(); err != nil {
+	if err = scanner.Err(); err != nil {
 		return fmt.Errorf("failed to scan file %s: %w", fn, err)
 	}
-	os.Exit(0)
+	if err = b.flush(); err != nil {
+		return fmt.Errorf("failed to flush batch: %w", err)
+	}
 	return nil
 }
