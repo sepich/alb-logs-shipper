@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
+	"github.com/prometheus/common/version"
 )
 
 type Options struct {
@@ -42,6 +43,7 @@ func main() {
 	var opts Options
 	var logLevel string
 	var labels stringSliceFlag
+	var ver bool
 	opts.Labels = make(map[string]string)
 	flag.StringVar(&opts.BucketName, "bucket-name", "", "Name of the S3 bucket with ALB logs (required)")
 	flag.DurationVar(&opts.WaitInterval, "wait", 60*time.Second, "Interval to wait between runs")
@@ -49,7 +51,12 @@ func main() {
 	flag.StringVar(&opts.LokiUser, "loki-user", "", "User to use for Loki authentication")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level (info, debug)")
 	flag.Var(&labels, "label", "Label to add to Loki stream, can be specified multiple times (key=value)")
+	flag.BoolVar(&ver, "version", false, "Show version and exit")
 	flag.Parse()
+	if ver {
+		fmt.Println(version.Print("alb-logs-shipper"))
+		os.Exit(0)
+	}
 
 	logger := log.NewLogfmtLogger(os.Stdout)
 	logger = level.NewFilter(logger, level.Allow(level.ParseDefault(logLevel, level.InfoValue())))

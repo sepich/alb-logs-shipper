@@ -13,6 +13,7 @@ require (
 	github.com/golang/snappy v1.0.0
 	github.com/grafana/dskit v0.0.0-20250508185919-68d09ac9016e
 	github.com/grafana/loki/v3 v3.5.0
+	github.com/prometheus/common v0.62.0
 )
 
 require (
@@ -108,7 +109,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/prometheus/client_golang v1.21.1 // indirect
 	github.com/prometheus/client_model v0.6.1 // indirect
-	github.com/prometheus/common v0.62.0 // indirect
 	github.com/prometheus/exporter-toolkit v0.13.2 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/prometheus/prometheus v0.302.1 // indirect
