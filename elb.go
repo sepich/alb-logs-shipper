@@ -5,33 +5,38 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
 type ELBMeta struct {
-	client *elasticloadbalancingv2.Client
-	data   map[string]Meta
+	data  map[string]Meta
+	roles map[string]string
 }
 
 type Meta struct {
+	Cluster   string
 	Namespace string
 	Ingress   string
 }
 
-func NewELBMeta(client *elasticloadbalancingv2.Client) *ELBMeta {
+func NewELBMeta(roles map[string]string) *ELBMeta {
 	return &ELBMeta{
-		data:   make(map[string]Meta),
-		client: client,
+		data:  make(map[string]Meta),
+		roles: roles,
 	}
 }
 
 // Get lazily returns metadata for a load balancer
-func (e *ELBMeta) Get(lbName string) (Meta, error) {
-	if meta, ok := e.data[lbName]; ok {
+func (e *ELBMeta) Get(accountID, lbName string) (Meta, error) {
+	if meta, ok := e.data[accountID+"/"+lbName]; ok {
 		return meta, nil
 	}
 
-	lbs, err := e.client.DescribeLoadBalancers(context.TODO(), &elasticloadbalancingv2.DescribeLoadBalancersInput{
+	cli := e.client(accountID)
+	lbs, err := cli.DescribeLoadBalancers(context.TODO(), &elasticloadbalancingv2.DescribeLoadBalancersInput{
 		Names: []string{lbName},
 	})
 	if err != nil {
@@ -41,7 +46,7 @@ func (e *ELBMeta) Get(lbName string) (Meta, error) {
 		return Meta{}, fmt.Errorf("load balancer %s not found", lbName)
 	}
 
-	tags, err := e.client.DescribeTags(context.TODO(), &elasticloadbalancingv2.DescribeTagsInput{
+	tags, err := cli.DescribeTags(context.TODO(), &elasticloadbalancingv2.DescribeTagsInput{
 		ResourceArns: []string{*lbs.LoadBalancers[0].LoadBalancerArn},
 	})
 	if err != nil {
@@ -50,14 +55,41 @@ func (e *ELBMeta) Get(lbName string) (Meta, error) {
 
 	meta := Meta{}
 	for _, tag := range tags.TagDescriptions[0].Tags {
-		if *tag.Key == "ingress.k8s.aws/stack" {
+		switch *tag.Key {
+		case "ingress.k8s.aws/stack":
 			tmp := strings.Split(*tag.Value, "/")
 			if len(tmp) != 2 {
 				return Meta{}, fmt.Errorf("invalid ingress tag format: %s", *tag.Value)
 			}
 			meta.Namespace, meta.Ingress = tmp[0], tmp[1]
+		case "cluster-id":
+			meta.Cluster = *tag.Value
 		}
 	}
-	e.data[lbName] = meta
+	e.data[accountID+"/"+lbName] = meta
 	return meta, nil
+}
+
+func (e *ELBMeta) client(accountID string) *elasticloadbalancingv2.Client {
+	cfg, err := config.LoadDefaultConfig(context.TODO())
+	if err != nil {
+		return nil
+	}
+
+	if e.roles[accountID] != "" {
+		roleAssumptionProvider := stscreds.NewAssumeRoleProvider(
+			sts.NewFromConfig(cfg),
+			e.roles[accountID],
+			func(o *stscreds.AssumeRoleOptions) {
+				o.RoleSessionName = "alb-logs-shipper"
+			},
+		)
+		cfg, err = config.LoadDefaultConfig(context.TODO(),
+			config.WithCredentialsProvider(roleAssumptionProvider),
+		)
+		if err != nil {
+			return nil
+		}
+	}
+	return elasticloadbalancingv2.NewFromConfig(cfg)
 }

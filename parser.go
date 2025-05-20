@@ -75,8 +75,7 @@ func NewParser(opts Options, elbMeta *ELBMeta, s3Client *s3.Client, logger log.L
 }
 
 func (s *Parser) run() error {
-	level.Info(s.logger).Log("msg", "Starting run")
-
+	num := 0
 	ctx := context.Background()
 	maxKeys := int32(1000) //no pager, tune interval to have less files per run
 	output, err := s.s3Client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
@@ -96,7 +95,7 @@ func (s *Parser) run() error {
 			level.Debug(s.logger).Log("msg", "skipping non-alb log file", "key", *obj.Key)
 			continue
 		}
-		if err := s.parseFile(ctx, *obj.Key, matches[fnRegex.SubexpIndex("id")]); err != nil {
+		if err := s.parseFile(ctx, *obj.Key, matches[fnRegex.SubexpIndex("account_id")], matches[fnRegex.SubexpIndex("id")]); err != nil {
 			level.Error(s.logger).Log("msg", "failed to ship file", "key", *obj.Key, "err", err)
 			os.Exit(1) // pod restart instead of deletion of not-shipped file
 		}
@@ -106,27 +105,31 @@ func (s *Parser) run() error {
 			Key:    obj.Key,
 		}); err != nil {
 			level.Error(s.logger).Log("msg", "failed to delete file", "key", *obj.Key, "err", err)
-			continue
 		}
+		num++
+	}
+	if num > 0 {
+		level.Info(s.logger).Log("msg", "shipped", "files", num)
 	}
 
 	return nil
 }
 
-func (s *Parser) parseFile(ctx context.Context, fn string, lb string) error {
-	meta, err := s.elbMeta.Get(lb)
+func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string) error {
+	meta, err := s.elbMeta.Get(accountID, lb)
 	if err != nil {
-		return fmt.Errorf("failed to get metadata for load balancer %s: %w", lb, err)
+		return fmt.Errorf("failed to get metadata for load balancer %s/%s: %w", accountID, lb, err)
 	}
 	labels := map[string]string{
 		"namespace": meta.Namespace,
 		"ingress":   meta.Ingress,
 	}
+	if meta.Cluster != "" {
+		labels["cluster"] = meta.Cluster
+		labels["index"] = meta.Cluster + "-" + meta.Namespace
+	}
 	for k, v := range s.opts.Labels {
 		labels[k] = v
-		if k == "cluster" {
-			labels["index"] = v + "-" + meta.Namespace
-		}
 	}
 	level.Debug(s.logger).Log("msg", "processing log file", "key", fn, "labels", fmt.Sprintf("%v", labels))
 	b := newBatch(labels, s.opts, &s.logger)

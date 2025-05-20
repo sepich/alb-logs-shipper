@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -44,6 +43,7 @@ func main() {
 	var opts Options
 	var logLevel string
 	var labels stringSliceFlag
+	var roles stringSliceFlag
 	var ver bool
 	opts.Labels = make(map[string]string)
 	flag.StringVar(&opts.BucketName, "bucket-name", "", "Name of the S3 bucket with ALB logs (required)")
@@ -53,6 +53,7 @@ func main() {
 	flag.StringVar(&logLevel, "log-level", "info", "Log level (info, debug)")
 	flag.StringVar(&opts.Format, "format", "raw", "Format to parse and ship log lines as (logfmt, json, raw)")
 	flag.Var(&labels, "label", "Label to add to Loki stream, can be specified multiple times (key=value)")
+	flag.Var(&roles, "role-arn", "ARN of the IAM role to assume to access ALB tags, can be specified multiple times")
 	flag.BoolVar(&ver, "version", false, "Show version and exit")
 	flag.Parse()
 	if ver {
@@ -89,6 +90,17 @@ func main() {
 		opts.Labels[parts[0]] = parts[1]
 	}
 
+	roleMap := make(map[string]string)
+	for _, role := range roles {
+		id := strings.Split(role, ":")
+		if len(id) != 6 {
+			level.Error(logger).Log("msg", "invalid role ARN", "role", role)
+			os.Exit(1)
+		}
+		roleMap[id[4]] = role
+	}
+
+	level.Info(logger).Log("msg", "Starting alb-logs-shipper", "version", version.Version)
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		level.Error(logger).Log("msg", "unable to load AWS SDK config", "err", err)
@@ -96,8 +108,7 @@ func main() {
 	}
 
 	s3Client := s3.NewFromConfig(cfg)
-	elbClient := elasticloadbalancingv2.NewFromConfig(cfg)
-	elbMeta := NewELBMeta(elbClient)
+	elbMeta := NewELBMeta(roleMap)
 	parser := NewParser(opts, elbMeta, s3Client, logger)
 
 	sgnl := make(chan os.Signal, 1)
