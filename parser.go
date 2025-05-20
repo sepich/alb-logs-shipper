@@ -47,6 +47,15 @@ var (
 		"classification":          true,
 		"classification_reason":   true,
 	}
+	numFields = map[string]bool{
+		"elb_status_code":          true,
+		"received_bytes":           true,
+		"request_processing_time":  true,
+		"response_processing_time": true,
+		"sent_bytes":               true,
+		"target_processing_time":   true,
+		"target_status_code":       true,
+	}
 )
 
 type Parser struct {
@@ -112,7 +121,6 @@ func (s *Parser) parseFile(ctx context.Context, fn string, lb string) error {
 	labels := map[string]string{
 		"namespace": meta.Namespace,
 		"ingress":   meta.Ingress,
-		"stream":    "alb",
 	}
 	for k, v := range s.opts.Labels {
 		labels[k] = v
@@ -153,8 +161,11 @@ func (s *Parser) parseFile(ctx context.Context, fn string, lb string) error {
 			level.Error(s.logger).Log("msg", "skipping log line with invalid timestamp", "line", logLine, "err", err)
 			continue
 		}
-		if s.opts.LogFmt {
+		switch s.opts.Format {
+		case "logfmt":
 			logLine = toLogfmt(logLine)
+		case "json":
+			logLine = toJSON(logLine)
 		}
 		if err = b.add(timestamp, logLine); err != nil {
 			return fmt.Errorf("failed to send batch: %w", err)
@@ -188,4 +199,26 @@ func toLogfmt(line string) string {
 		}
 	}
 	return strings.Join(res, " ")
+}
+
+// toJSON converts a ALB log line to JSON format
+func toJSON(line string) string {
+	matches := evRegex.FindStringSubmatch(line)
+	if len(matches) == 0 { // TODO
+		fmt.Println("failed to parse log line:", line)
+		os.Exit(1)
+	}
+	res := []string{}
+	for i, name := range evRegex.SubexpNames()[1:] {
+		if skipFields[name] {
+			continue // drop non relevant for EKS ALB
+		}
+		if numFields[name] {
+			res = append(res, fmt.Sprintf("%q:%s", name, matches[i+1]))
+		} else {
+			res = append(res, fmt.Sprintf("%q:%q", name, matches[i+1]))
+		}
+	}
+
+	return "{" + strings.Join(res, ",") + "}"
 }

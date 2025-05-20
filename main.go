@@ -21,7 +21,7 @@ import (
 type Options struct {
 	BucketName   string
 	WaitInterval time.Duration
-	LogFmt       bool
+	Format       string
 	LokiURL      string
 	LokiUser     string
 	LokiPassword string
@@ -51,7 +51,7 @@ func main() {
 	flag.StringVar(&opts.LokiURL, "loki-url", "", "URL to Loki API (required)")
 	flag.StringVar(&opts.LokiUser, "loki-user", "", "User to use for Loki authentication")
 	flag.StringVar(&logLevel, "log-level", "info", "Log level (info, debug)")
-	flag.BoolVar(&opts.LogFmt, "logfmt", false, "Parse and ship log lines as logfmt (else raw ALB logs)")
+	flag.StringVar(&opts.Format, "format", "raw", "Format to parse and ship log lines as (logfmt, json, raw)")
 	flag.Var(&labels, "label", "Label to add to Loki stream, can be specified multiple times (key=value)")
 	flag.BoolVar(&ver, "version", false, "Show version and exit")
 	flag.Parse()

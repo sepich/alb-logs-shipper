@@ -48,6 +48,8 @@ Yet another ALB S3 logs shipper to Loki. This one mostly targeted for an EKS use
 Usage of /alb-logs-shipper:
   -bucket-name string
         Name of the S3 bucket with ALB logs (required)
+  -format string
+        Format to parse and ship log lines as (logfmt, json, raw) (default "raw")
   -label value
         Label to add to Loki stream, can be specified multiple times (key=value)
   -log-level string
@@ -56,6 +58,8 @@ Usage of /alb-logs-shipper:
         URL to Loki API (required)
   -loki-user string
         User to use for Loki authentication
+  -version
+        Show version and exit
   -wait duration
         Interval to wait between runs (default 1m0s)
 ```
