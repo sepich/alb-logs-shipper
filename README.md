@@ -7,7 +7,7 @@ Yet another ALB S3 logs shipper to Loki. This one mostly targeted for an EKS use
 - You or mutation adds the following annotation to an Ingress object of alb ingressClass:  
 `alb.ingress.kubernetes.io/load-balancer-attributes: access_logs.s3.enabled=true,access_logs.s3.bucket=<bucket-name>`
 - ALB creates log files in the bucket in the format:  
-  ``` 
+  ```
   bucket[/prefix]/AWSLogs/aws-account-id/elasticloadbalancing/region/yyyy/mm/dd/aws-account-id_elasticloadbalancing_region_app.load-balancer-id_end-time_ip-address_random-string.log.gz
   ```
 - `alb-logs-shipper` start to list all files from `--bucket-name` and process only those matching the pattern above
@@ -130,3 +130,4 @@ cons:
  
 ### TODO
 - The tag `ingress.k8s.aws/stack` is set to `namespace/ingressname` only for an implicit IngressGroup. When the IngressGroup is set on Ingress, there is no way to get ns/ingressname. Dynamic placeholders are not supported in `--default-tags` of alb controller. Need to use mutation for Ingress objects adding `alb.ingress.kubernetes.io/tags` annotation with ns/ingressname.
+- handle SIGTERM between files?

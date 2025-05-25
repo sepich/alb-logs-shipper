@@ -21,7 +21,7 @@ var (
 	// example: my-bucket/AWSLogs/123456789012/elasticloadbalancing/us-east-1/2022/01/24/123456789012_elasticloadbalancing_us-east-1_app.my-loadbalancer.b13ea9d19f16d015_20220124T0000Z_0.0.0.0_2et2e1mx.log.gz
 	fnRegex    = regexp.MustCompile(`AWSLogs\/(?P<account_id>\d+)\/elasticloadbalancing\/(?P<region>[\w-]+)\/(?P<year>\d+)\/(?P<month>\d+)\/(?P<day>\d+)\/\d+\_elasticloadbalancing_(?:\w+-\w+-(?:\w+-)?\d)_app\.(?P<id>[a-zA-Z0-9\-]+)\..+\.log\.gz`)
 	tsRegex    = regexp.MustCompile(`(?P<timestamp>\d+-\d+-\d+T\d+:\d+:\d+(?:\.\d+Z)?)`)
-	evRegex    = regexp.MustCompile(`(?P<type>\S+) (?P<time>\S+) (?P<elb>\S+) (?P<client>\S+) (?P<target>\S+) (?P<request_processing_time>\S+) (?P<target_processing_time>\S+) (?P<response_processing_time>\S+) (?P<elb_status_code>\S+) (?P<target_status_code>\S+) (?P<received_bytes>\S+) (?P<sent_bytes>\S+) "(?P<request>.+)" "(?P<user_agent>.+)" (?P<ssl_cipher>\S+) (?P<ssl_protocol>\S+) (?P<target_group_arn>\S+) "(?P<trace_id>.+)" "(?P<domain_name>.+)" "(?P<chosen_cert_arn>.+)" (?P<matched_rule_priority>\S+) (?P<request_creation_time>\S+) "(?P<actions_executed>.+)" "(?P<redirect_url>.+)" "(?P<error_reason>.+)" "(?P<targets>.+)" "(?P<target_status_code_list>.+)" "(?P<classification>.+)" "(?P<classification_reason>.+)" (?P<conn_trace_id>\S+)`)
+	evRegex    = regexp.MustCompile(`(?P<type>\S+) (?P<time>\S+) (?P<elb>\S+) (?P<client>\S+) (?P<target>\S+) (?P<request_processing_time>\S+) (?P<target_processing_time>\S+) (?P<response_processing_time>\S+) (?P<elb_status_code>\S+) (?P<target_status_code>\S+) (?P<received_bytes>\S+) (?P<sent_bytes>\S+) "(?P<request>.+)" "(?P<user_agent>.*)" (?P<ssl_cipher>\S+) (?P<ssl_protocol>\S+) (?P<target_group_arn>\S+) "(?P<trace_id>.+)" "(?P<domain_name>.+)" "(?P<chosen_cert_arn>.+)" (?P<matched_rule_priority>\S+) (?P<request_creation_time>\S+) "(?P<actions_executed>.+)" "(?P<redirect_url>.+)" "(?P<error_reason>.+)" "(?P<targets>.+)" "(?P<target_status_code_list>.+)" "(?P<classification>.+)" "(?P<classification_reason>.+)" (?P<conn_trace_id>\S+)`)
 	skipFields = map[string]bool{
 		"chosen_cert_arn":         true, // hardcoded in ingress
 		"target_group_arn":        true, // not configured directly
@@ -86,6 +86,7 @@ func (s *Parser) run() error {
 		return err
 	}
 
+	start := time.Now()
 	for _, obj := range output.Contents {
 		if obj.Key == nil {
 			continue
@@ -109,7 +110,7 @@ func (s *Parser) run() error {
 		num++
 	}
 	if num > 0 {
-		level.Info(s.logger).Log("msg", "shipped", "files", num)
+		level.Info(s.logger).Log("msg", "shipped", "files", num, "time", time.Since(start))
 	}
 
 	return nil
