@@ -96,7 +96,7 @@ func (s *Parser) run() error {
 			level.Debug(s.logger).Log("msg", "skipping non-alb log file", "key", *obj.Key)
 			continue
 		}
-		if err := s.parseFile(ctx, *obj.Key, matches[fnRegex.SubexpIndex("account_id")], matches[fnRegex.SubexpIndex("id")]); err != nil {
+		if err = s.parseFile(ctx, *obj.Key, matches[fnRegex.SubexpIndex("account_id")], matches[fnRegex.SubexpIndex("id")]); err != nil {
 			level.Error(s.logger).Log("msg", "failed to ship file", "key", *obj.Key, "err", err)
 			os.Exit(1) // pod restart instead of deletion of not-shipped file
 		}

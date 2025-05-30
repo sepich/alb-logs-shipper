@@ -130,4 +130,9 @@ cons:
  
 ### TODO
 - The tag `ingress.k8s.aws/stack` is set to `namespace/ingressname` only for an implicit IngressGroup. When the IngressGroup is set on Ingress, there is no way to get ns/ingressname. Dynamic placeholders are not supported in `--default-tags` of alb controller. Need to use mutation for Ingress objects adding `alb.ingress.kubernetes.io/tags` annotation with ns/ingressname.
+- When alb-ingress is deleted, ALB is removed and then final logs appear later in S3. At this point, alb-shipper should use cached info to set the correct labels for logs. If alb-shipper was restarted after ALB is removed and before logs appear in S3, it has no way to get ALB tags anymore. To prevent data loss, it would exit with error instead of deleting the non-shipped logs. In this case, files should be reviewed and deleted manually:
+  ```
+  level=error caller=parser.go:100 msg="failed to ship file" key=AWSLogs/1234567890/elasticloadbalancing/eu-central-1/2025/05/30/1234567890_elasticloadbalancing_eu-central-1_app.loadbalancer-id.614c0546c583b475_20250530T0825Z_10.1.1.1_4qhkaho9.log.gz err="failed to get metadata for load balancer 1234567890/loadbalancer-id: operation error Elastic Load Balancing v2: DescribeLoadBalancers, https response error StatusCode: 400, RequestID: b8e6c668-8209-420e-8941-22b66ff2e9b7, LoadBalancerNotFound: Load balancers '[loadbalancer-id]' not found"
+  ```
+  Add some `--drop-unknown-files` flag and handle `LoadBalancerNotFound` error automatically?
 - handle SIGTERM between files?
