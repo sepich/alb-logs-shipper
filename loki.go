@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	timeout    = 5 * time.Second
+	timeout    = 11 * time.Second // 10s on loki side
 	minBackoff = 100 * time.Millisecond
 	maxBackoff = 30 * time.Second
 	maxRetries = 10
