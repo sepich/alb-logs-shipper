@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
@@ -91,6 +92,7 @@ func (s *Parser) scan() error {
 	if err != nil {
 		return err
 	}
+
 	start := time.Now()
 	for _, obj := range output.Contents {
 		if obj.Key == nil {
@@ -238,4 +240,11 @@ func toJSON(line string) string {
 	}
 
 	return "{" + strings.Join(res, ",") + "}"
+}
+
+func (s *Parser) metrics() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		fmt.Fprintf(w, "alb_logs_shipper_queue_length %d\n", len(s.queue))
+	})
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -26,6 +27,7 @@ type Options struct {
 	LokiPassword string
 	Labels       map[string]string
 	Workers      int
+	Port         int
 }
 
 // stringSliceFlag implements flag.Value
@@ -56,6 +58,7 @@ func main() {
 	flag.Var(&labels, "label", "Label to add to Loki stream, can be specified multiple times (key=value)")
 	flag.Var(&roles, "role-arn", "ARN of the IAM role to assume to access ALB tags, can be specified multiple times")
 	flag.IntVar(&opts.Workers, "workers", 4, "Number of workers to run")
+	flag.IntVar(&opts.Port, "port", 8080, "Port to expose metrics on")
 	flag.BoolVar(&ver, "version", false, "Show version and exit")
 	flag.Parse()
 	if ver {
@@ -117,20 +120,25 @@ func main() {
 	signal.Notify(sgnl, syscall.SIGINT, syscall.SIGTERM)
 	waitTimer := time.NewTimer(0)
 
-	//go func() {
-	for {
-		select {
-		case <-waitTimer.C:
-			if err := parser.scan(); err != nil {
-				level.Error(logger).Log("msg", "scan S3 failed", "err", err)
-				os.Exit(1)
+	go func() {
+		for {
+			select {
+			case <-waitTimer.C:
+				waitTimer.Reset(opts.WaitInterval)
+				if err := parser.scan(); err != nil {
+					level.Error(logger).Log("msg", "scan S3 failed", "err", err)
+					os.Exit(1)
+				}
+			case <-sgnl:
+				level.Info(logger).Log("msg", "Received SIGINT or SIGTERM. Shutting down")
+				os.Exit(0)
 			}
-			waitTimer.Reset(opts.WaitInterval)
-		case <-sgnl:
-			level.Info(logger).Log("msg", "Received SIGINT or SIGTERM. Shutting down")
-			os.Exit(0)
 		}
+	}()
+
+	level.Info(logger).Log("msg", "Starting metrics server", "port", opts.Port)
+	http.Handle("/metrics", parser.metrics())
+	if err := http.ListenAndServe(fmt.Sprintf(":%d", opts.Port), nil); err != nil {
+		level.Error(logger).Log("msg", "metrics server failed", "err", err)
 	}
-	//}()
-	// metrics server
 }
