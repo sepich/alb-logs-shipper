@@ -25,6 +25,7 @@ type Options struct {
 	LokiUser     string
 	LokiPassword string
 	Labels       map[string]string
+	Workers      int
 }
 
 // stringSliceFlag implements flag.Value
@@ -54,6 +55,7 @@ func main() {
 	flag.StringVar(&opts.Format, "format", "raw", "Format to parse and ship log lines as (logfmt, json, raw)")
 	flag.Var(&labels, "label", "Label to add to Loki stream, can be specified multiple times (key=value)")
 	flag.Var(&roles, "role-arn", "ARN of the IAM role to assume to access ALB tags, can be specified multiple times")
+	flag.IntVar(&opts.Workers, "workers", 4, "Number of workers to run")
 	flag.BoolVar(&ver, "version", false, "Show version and exit")
 	flag.Parse()
 	if ver {
@@ -119,8 +121,8 @@ func main() {
 	for {
 		select {
 		case <-waitTimer.C:
-			if err := parser.run(); err != nil {
-				level.Error(logger).Log("msg", "run failed", "err", err)
+			if err := parser.scan(); err != nil {
+				level.Error(logger).Log("msg", "scan S3 failed", "err", err)
 				os.Exit(1)
 			}
 			waitTimer.Reset(opts.WaitInterval)

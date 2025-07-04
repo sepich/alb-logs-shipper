@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
@@ -12,7 +13,7 @@ import (
 )
 
 type ELBMeta struct {
-	data  map[string]Meta
+	data  sync.Map
 	roles map[string]string
 }
 
@@ -24,15 +25,15 @@ type Meta struct {
 
 func NewELBMeta(roles map[string]string) *ELBMeta {
 	return &ELBMeta{
-		data:  make(map[string]Meta),
+		data:  sync.Map{},
 		roles: roles,
 	}
 }
 
 // Get lazily returns metadata for a load balancer
 func (e *ELBMeta) Get(accountID, lbName string) (Meta, error) {
-	if meta, ok := e.data[accountID+"/"+lbName]; ok {
-		return meta, nil
+	if meta, ok := e.data.Load(accountID + "/" + lbName); ok {
+		return meta.(Meta), nil
 	}
 
 	cli := e.client(accountID)
@@ -66,7 +67,7 @@ func (e *ELBMeta) Get(accountID, lbName string) (Meta, error) {
 			meta.Cluster = *tag.Value
 		}
 	}
-	e.data[accountID+"/"+lbName] = meta
+	e.data.Store(accountID+"/"+lbName, meta)
 	return meta, nil
 }
 

@@ -63,18 +63,24 @@ type Parser struct {
 	elbMeta  *ELBMeta
 	s3Client *s3.Client
 	logger   log.Logger
+	queue    chan *string
 }
 
 func NewParser(opts Options, elbMeta *ELBMeta, s3Client *s3.Client, logger log.Logger) *Parser {
-	return &Parser{
+	parser := &Parser{
 		opts:     opts,
 		elbMeta:  elbMeta,
 		s3Client: s3Client,
 		logger:   logger,
+		queue:    make(chan *string, 10*opts.Workers),
 	}
+	for i := 0; i < opts.Workers; i++ {
+		go parser.worker()
+	}
+	return parser
 }
 
-func (s *Parser) run() error {
+func (s *Parser) scan() error {
 	num := 0
 	ctx := context.Background()
 	maxKeys := int32(1000) //no pager, tune interval to have less files per run
@@ -85,34 +91,41 @@ func (s *Parser) run() error {
 	if err != nil {
 		return err
 	}
-
 	start := time.Now()
 	for _, obj := range output.Contents {
 		if obj.Key == nil {
 			continue
 		}
-		matches := fnRegex.FindStringSubmatch(*obj.Key)
+		s.queue <- obj.Key
+		num++
+	}
+	if num > 0 {
+		level.Info(s.logger).Log("msg", "scanned", "files", num, "time", time.Since(start), "queue", len(s.queue))
+	}
+	return nil
+}
+
+func (s *Parser) worker() error {
+	ctx := context.Background() // limit time to process file? will restart of processing help?
+
+	for fn := range s.queue {
+		matches := fnRegex.FindStringSubmatch(*fn)
 		if len(matches) == 0 {
-			level.Debug(s.logger).Log("msg", "skipping non-alb log file", "key", *obj.Key)
+			level.Debug(s.logger).Log("msg", "skipping non-alb log file", "key", *fn)
 			continue
 		}
-		if err = s.parseFile(ctx, *obj.Key, matches[fnRegex.SubexpIndex("account_id")], matches[fnRegex.SubexpIndex("id")]); err != nil {
-			level.Error(s.logger).Log("msg", "failed to ship file", "key", *obj.Key, "err", err)
+		if err := s.parseFile(ctx, *fn, matches[fnRegex.SubexpIndex("account_id")], matches[fnRegex.SubexpIndex("id")]); err != nil {
+			level.Error(s.logger).Log("msg", "failed to ship file", "key", *fn, "err", err)
 			os.Exit(1) // pod restart instead of deletion of not-shipped file
 		}
 
 		if _, err := s.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
 			Bucket: &s.opts.BucketName,
-			Key:    obj.Key,
+			Key:    fn,
 		}); err != nil {
-			level.Error(s.logger).Log("msg", "failed to delete file", "key", *obj.Key, "err", err)
+			level.Error(s.logger).Log("msg", "failed to delete file", "key", *fn, "err", err)
 		}
-		num++
 	}
-	if num > 0 {
-		level.Info(s.logger).Log("msg", "shipped", "files", num, "time", time.Since(start))
-	}
-
 	return nil
 }
 
