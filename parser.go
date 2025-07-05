@@ -102,7 +102,7 @@ func (s *Parser) scan() error {
 		num++
 	}
 	if num > 0 {
-		level.Info(s.logger).Log("msg", "scanned", "files", num, "time", time.Since(start), "queue", len(s.queue))
+		level.Info(s.logger).Log("msg", "new files", "found", num, "time", time.Since(start), "queue", len(s.queue))
 	}
 	return nil
 }
@@ -132,6 +132,7 @@ func (s *Parser) worker() error {
 }
 
 func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string) error {
+	start := time.Now()
 	meta, err := s.elbMeta.Get(accountID, lb)
 	if err != nil {
 		return fmt.Errorf("failed to get metadata for load balancer %s/%s: %w", accountID, lb, err)
@@ -147,7 +148,6 @@ func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string)
 	for k, v := range s.opts.Labels {
 		labels[k] = v
 	}
-	level.Debug(s.logger).Log("msg", "processing log file", "key", fn, "labels", fmt.Sprintf("%v", labels))
 	b := newBatch(labels, s.opts, &s.logger)
 
 	obj, err := s.s3Client.GetObject(ctx, &s3.GetObjectInput{
@@ -155,6 +155,10 @@ func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string)
 		Key:    &fn,
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "NoSuchKey") {
+			level.Debug(s.logger).Log("msg", "skipping non-existent file", "key", fn)
+			return nil
+		}
 		return fmt.Errorf("failed to get object %s: %w", fn, err)
 	}
 	defer obj.Body.Close()
@@ -196,6 +200,7 @@ func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string)
 	if err = b.flush(); err != nil {
 		return fmt.Errorf("failed to flush batch: %w", err)
 	}
+	level.Debug(s.logger).Log("msg", "shipped file", "key", fn, "labels", fmt.Sprintf("%v", labels), "lines", lineCount, "time", time.Since(start))
 	return nil
 }
 

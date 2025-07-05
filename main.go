@@ -105,7 +105,7 @@ func main() {
 		roleMap[id[4]] = role
 	}
 
-	level.Info(logger).Log("msg", "Starting alb-logs-shipper", "version", version.Version)
+	level.Info(logger).Log("msg", "Starting alb-logs-shipper", "version", version.Version, "metrics-port", opts.Port)
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
 		level.Error(logger).Log("msg", "unable to load AWS SDK config", "err", err)
@@ -136,7 +136,6 @@ func main() {
 		}
 	}()
 
-	level.Info(logger).Log("msg", "Starting metrics server", "port", opts.Port)
 	http.Handle("/metrics", parser.metrics())
 	if err := http.ListenAndServe(fmt.Sprintf(":%d", opts.Port), nil); err != nil {
 		level.Error(logger).Log("msg", "metrics server failed", "err", err)
