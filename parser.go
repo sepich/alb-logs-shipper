@@ -200,7 +200,7 @@ func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string)
 	if err = b.flush(); err != nil {
 		return fmt.Errorf("failed to flush batch: %w", err)
 	}
-	level.Debug(s.logger).Log("msg", "shipped file", "key", fn, "labels", fmt.Sprintf("%v", labels), "lines", lineCount, "time", time.Since(start))
+	level.Debug(s.logger).Log("msg", "shipped file", "key", fn, "labels", fmt.Sprintf("%v", labels), "lines", lineCount, "time", time.Since(start), "lines/s", fmt.Sprintf("%.2f", float64(lineCount)/time.Since(start).Seconds()))
 	return nil
 }
 

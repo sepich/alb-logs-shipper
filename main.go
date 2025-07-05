@@ -80,7 +80,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if os.Getenv("LOKI_PASSWORD") == "" {
+	if opts.LokiUser != "" && os.Getenv("LOKI_PASSWORD") == "" {
 		level.Error(logger).Log("msg", "LOKI_PASSWORD environment variable is required")
 		os.Exit(1)
 	}
