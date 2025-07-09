@@ -89,26 +89,19 @@ It is possible to ship logs from ALB in aws account `A` to S3 bucket in account 
 
 ### Cli args
 ```bash
-# docker run sepa/alb-logs-shipper
-Usage of /alb-logs-shipper:
-  -bucket-name string
-        Name of the S3 bucket with ALB logs (required)
-  -format string
-        Format to parse and ship log lines as (logfmt, json, raw) (default "raw")
-  -label value
-        Label to add to Loki stream, can be specified multiple times (key=value)
-  -log-level string
-        Log level (info, debug) (default "info")
-  -loki-url string
-        URL to Loki API (required)
-  -loki-user string
-        User to use for Loki authentication
-  -role-arn value
-        ARN of the IAM role to assume to access ALB tags, can be specified multiple times
-  -version
-        Show version and exit
-  -wait duration
-        Interval to wait between runs (default 1m0s)
+~ docker run sepa/alb-logs-shipper -h
+Usage of ./alb-logs-shipper:
+  -b, --bucket-name string     Name of the S3 bucket with ALB logs (required)
+  -o, --format string          Format to parse and ship log lines as (logfmt, json, raw) (default "raw")
+  -l, --label stringArray      Label to add to Loki stream, can be specified multiple times (key=value)
+      --log-level string       Log level (info, debug) (default "info")
+  -H, --loki-url string        URL to Loki API (required)
+  -u, --loki-user string       User to use for Loki authentication
+  -p, --port int               Port to expose metrics on (default 8080)
+  -a, --role-arn stringArray   ARN of the IAM role to assume to access ALB tags, can be specified multiple times
+  -v, --version                Show version and exit
+  -w, --wait duration          Interval to wait between runs (default 1m0s)
+  -n, --workers int            Number of workers to run (default 4)
 ```
 And the password for Loki endpoint could be set via `LOKI_PASSWORD` env var.
 

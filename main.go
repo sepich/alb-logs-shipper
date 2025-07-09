@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/common/version"
+	"github.com/spf13/pflag"
 )
 
 type Options struct {
@@ -30,44 +30,28 @@ type Options struct {
 	Port         int
 }
 
-// stringSliceFlag implements flag.Value
-type stringSliceFlag []string
-
-func (s *stringSliceFlag) String() string {
-	return fmt.Sprintf("%v", *s)
-}
-
-func (s *stringSliceFlag) Set(value string) error {
-	*s = append(*s, value)
-	return nil
-}
-
 func main() {
 	var opts Options
-	var logLevel string
-	var labels stringSliceFlag
-	var roles stringSliceFlag
-	var ver bool
 	opts.Labels = make(map[string]string)
-	flag.StringVar(&opts.BucketName, "bucket-name", "", "Name of the S3 bucket with ALB logs (required)")
-	flag.DurationVar(&opts.WaitInterval, "wait", 60*time.Second, "Interval to wait between runs")
-	flag.StringVar(&opts.LokiURL, "loki-url", "", "URL to Loki API (required)")
-	flag.StringVar(&opts.LokiUser, "loki-user", "", "User to use for Loki authentication")
-	flag.StringVar(&logLevel, "log-level", "info", "Log level (info, debug)")
-	flag.StringVar(&opts.Format, "format", "raw", "Format to parse and ship log lines as (logfmt, json, raw)")
-	flag.Var(&labels, "label", "Label to add to Loki stream, can be specified multiple times (key=value)")
-	flag.Var(&roles, "role-arn", "ARN of the IAM role to assume to access ALB tags, can be specified multiple times")
-	flag.IntVar(&opts.Workers, "workers", 4, "Number of workers to run")
-	flag.IntVar(&opts.Port, "port", 8080, "Port to expose metrics on")
-	flag.BoolVar(&ver, "version", false, "Show version and exit")
-	flag.Parse()
-	if ver {
+	pflag.StringVarP(&opts.BucketName, "bucket-name", "b", "", "Name of the S3 bucket with ALB logs (required)")
+	pflag.DurationVarP(&opts.WaitInterval, "wait", "w", 60*time.Second, "Interval to wait between runs")
+	pflag.StringVarP(&opts.LokiURL, "loki-url", "H", "", "URL to Loki API (required)")
+	pflag.StringVarP(&opts.LokiUser, "loki-user", "u", "", "User to use for Loki authentication")
+	var logLevel = pflag.StringP("log-level", "", "info", "Log level (info, debug)")
+	pflag.StringVarP(&opts.Format, "format", "o", "raw", "Format to parse and ship log lines as (logfmt, json, raw)")
+	var labels = pflag.StringArrayP("label", "l", []string{}, "Label to add to Loki stream, can be specified multiple times (key=value)")
+	var roles = pflag.StringArrayP("role-arn", "a", []string{}, "ARN of the IAM role to assume to access ALB tags, can be specified multiple times")
+	pflag.IntVarP(&opts.Workers, "workers", "n", 4, "Number of workers to run")
+	pflag.IntVarP(&opts.Port, "port", "p", 8080, "Port to expose metrics on")
+	var ver = pflag.BoolP("version", "v", false, "Show version and exit")
+	pflag.Parse()
+	if *ver {
 		fmt.Println(version.Print("alb-logs-shipper"))
 		os.Exit(0)
 	}
 
 	logger := log.NewLogfmtLogger(os.Stdout)
-	logger = level.NewFilter(logger, level.Allow(level.ParseDefault(logLevel, level.InfoValue())))
+	logger = level.NewFilter(logger, level.Allow(level.ParseDefault(*logLevel, level.InfoValue())))
 	logger = log.With(logger, "caller", log.DefaultCaller)
 
 	if opts.BucketName == "" {
@@ -86,7 +70,7 @@ func main() {
 	}
 	opts.LokiPassword = os.Getenv("LOKI_PASSWORD")
 
-	for _, label := range labels {
+	for _, label := range *labels {
 		parts := strings.SplitN(label, "=", 2)
 		if len(parts) < 2 || len(parts[0]) == 0 || len(parts[1]) == 0 {
 			level.Error(logger).Log("msg", "invalid label format (k=v)", "label", label)
@@ -96,7 +80,7 @@ func main() {
 	}
 
 	roleMap := make(map[string]string)
-	for _, role := range roles {
+	for _, role := range *roles {
 		id := strings.Split(role, ":")
 		if len(id) != 6 {
 			level.Error(logger).Log("msg", "invalid role ARN", "role", role)

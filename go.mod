@@ -16,6 +16,7 @@ require (
 	github.com/grafana/dskit v0.0.0-20250508185919-68d09ac9016e
 	github.com/grafana/loki/v3 v3.5.0
 	github.com/prometheus/common v0.62.0
+	github.com/spf13/pflag v1.0.6
 )
 
 require (
