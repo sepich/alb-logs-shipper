@@ -89,7 +89,7 @@ It is possible to ship logs from ALB in aws account `A` to S3 bucket in account 
 
 ### Cli args
 ```bash
-~ docker run sepa/alb-logs-shipper -h
+$ docker run sepa/alb-logs-shipper -h
 Usage of ./alb-logs-shipper:
   -b, --bucket-name string     Name of the S3 bucket with ALB logs (required)
   -o, --format string          Format to parse and ship log lines as (logfmt, json, raw) (default "raw")
