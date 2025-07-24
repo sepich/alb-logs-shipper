@@ -128,4 +128,3 @@ cons:
   level=error caller=parser.go:100 msg="failed to ship file" key=AWSLogs/1234567890/elasticloadbalancing/eu-central-1/2025/05/30/1234567890_elasticloadbalancing_eu-central-1_app.loadbalancer-id.614c0546c583b475_20250530T0825Z_10.1.1.1_4qhkaho9.log.gz err="failed to get metadata for load balancer 1234567890/loadbalancer-id: operation error Elastic Load Balancing v2: DescribeLoadBalancers, https response error StatusCode: 400, RequestID: b8e6c668-8209-420e-8941-22b66ff2e9b7, LoadBalancerNotFound: Load balancers '[loadbalancer-id]' not found"
   ```
   Add some `--drop-unknown-files` flag and handle `LoadBalancerNotFound` error automatically?
-- handle SIGTERM between files?

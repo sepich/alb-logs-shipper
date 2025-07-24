@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -65,6 +64,7 @@ type Parser struct {
 	s3Client *s3.Client
 	logger   log.Logger
 	queue    chan *string
+	stop     bool
 }
 
 func NewParser(opts Options, elbMeta *ELBMeta, s3Client *s3.Client, logger log.Logger) *Parser {
@@ -75,10 +75,16 @@ func NewParser(opts Options, elbMeta *ELBMeta, s3Client *s3.Client, logger log.L
 		logger:   logger,
 		queue:    make(chan *string, 10*opts.Workers),
 	}
-	for i := 0; i < opts.Workers; i++ {
-		go parser.worker()
-	}
 	return parser
+}
+
+// Stop gracefully all workers
+func (s *Parser) Stop() {
+	if s.stop {
+		return
+	}
+	s.stop = true
+	close(s.queue)
 }
 
 func (s *Parser) scan() error {
@@ -95,7 +101,7 @@ func (s *Parser) scan() error {
 
 	start := time.Now()
 	for _, obj := range output.Contents {
-		if obj.Key == nil {
+		if obj.Key == nil || s.stop {
 			continue
 		}
 		s.queue <- obj.Key
@@ -118,7 +124,7 @@ func (s *Parser) worker() error {
 		}
 		if err := s.parseFile(ctx, *fn, matches[fnRegex.SubexpIndex("account_id")], matches[fnRegex.SubexpIndex("id")]); err != nil {
 			level.Error(s.logger).Log("msg", "failed to ship file", "key", *fn, "err", err)
-			os.Exit(1) // pod restart instead of deletion of not-shipped file
+			return err // pod restart instead of deletion of not-shipped file
 		}
 
 		if _, err := s.s3Client.DeleteObject(ctx, &s3.DeleteObjectInput{
@@ -186,9 +192,12 @@ func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string)
 		}
 		switch s.opts.Format {
 		case "logfmt":
-			logLine = toLogfmt(logLine)
+			logLine, err = toLogfmt(logLine)
 		case "json":
-			logLine = toJSON(logLine)
+			logLine, err = toJSON(logLine)
+		}
+		if err != nil {
+			return err
 		}
 		if err = b.add(timestamp, logLine); err != nil {
 			return fmt.Errorf("failed to send batch: %w", err)
@@ -205,11 +214,10 @@ func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string)
 }
 
 // toLogfmt converts a ALB log line to logfmt format
-func toLogfmt(line string) string {
+func toLogfmt(line string) (string, error) {
 	matches := evRegex.FindStringSubmatch(line)
-	if len(matches) == 0 { // TODO
-		fmt.Println("failed to parse log line:", line)
-		os.Exit(1)
+	if len(matches) == 0 {
+		return "", fmt.Errorf("failed to parse log line: %s", line)
 	}
 	res := []string{}
 	for i, name := range evRegex.SubexpNames()[1:] {
@@ -222,15 +230,14 @@ func toLogfmt(line string) string {
 			res = append(res, fmt.Sprintf("%s=%s", name, matches[i+1]))
 		}
 	}
-	return strings.Join(res, " ")
+	return strings.Join(res, " "), nil
 }
 
 // toJSON converts a ALB log line to JSON format
-func toJSON(line string) string {
+func toJSON(line string) (string, error) {
 	matches := evRegex.FindStringSubmatch(line)
-	if len(matches) == 0 { // TODO
-		fmt.Println("failed to parse log line:", line)
-		os.Exit(1)
+	if len(matches) == 0 {
+		return "", fmt.Errorf("failed to parse log line: %s", line)
 	}
 	res := []string{}
 	for i, name := range evRegex.SubexpNames()[1:] {
@@ -244,7 +251,7 @@ func toJSON(line string) string {
 		}
 	}
 
-	return "{" + strings.Join(res, ",") + "}"
+	return "{" + strings.Join(res, ",") + "}", nil
 }
 
 func (s *Parser) metrics() http.Handler {

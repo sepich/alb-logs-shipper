@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -111,17 +112,34 @@ func main() {
 				waitTimer.Reset(opts.WaitInterval)
 				if err := parser.scan(); err != nil {
 					level.Error(logger).Log("msg", "scan S3 failed", "err", err)
-					os.Exit(1)
+					parser.Stop()
+					return
 				}
 			case <-sgnl:
-				level.Info(logger).Log("msg", "Received SIGINT or SIGTERM. Shutting down")
-				os.Exit(0)
+				level.Info(logger).Log("msg", "received SIGINT or SIGTERM, shutting down...")
+				parser.Stop()
+				return
 			}
 		}
 	}()
 
-	http.Handle("/metrics", parser.metrics())
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", opts.Port), nil); err != nil {
-		level.Error(logger).Log("msg", "metrics server failed", "err", err)
+	go func() {
+		http.Handle("/metrics", parser.metrics())
+		if err := http.ListenAndServe(fmt.Sprintf(":%d", opts.Port), nil); err != nil {
+			level.Error(logger).Log("msg", "metrics server failed", "err", err)
+			parser.Stop()
+		}
+	}()
+
+	var wg sync.WaitGroup
+	for i := 0; i < opts.Workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := parser.worker(); err != nil {
+				parser.Stop() // pod restart instead of deletion of not-shipped file
+			}
+		}()
 	}
+	wg.Wait()
 }
