@@ -5,14 +5,13 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 )
 
 var (
@@ -62,12 +61,12 @@ type Parser struct {
 	opts     Options
 	elbMeta  *ELBMeta
 	s3Client *s3.Client
-	logger   log.Logger
+	logger   *slog.Logger
 	queue    chan *string
 	stop     bool
 }
 
-func NewParser(opts Options, elbMeta *ELBMeta, s3Client *s3.Client, logger log.Logger) *Parser {
+func NewParser(opts Options, elbMeta *ELBMeta, s3Client *s3.Client, logger *slog.Logger) *Parser {
 	parser := &Parser{
 		opts:     opts,
 		elbMeta:  elbMeta,
@@ -108,7 +107,7 @@ func (s *Parser) scan() error {
 		num++
 	}
 	if num > 0 {
-		level.Info(s.logger).Log("msg", "new files", "found", num, "time", time.Since(start), "queue", len(s.queue))
+		s.logger.Info("new files", "found", num, "time", time.Since(start), "queue", len(s.queue))
 	}
 	return nil
 }
@@ -119,11 +118,11 @@ func (s *Parser) worker() error {
 	for fn := range s.queue {
 		matches := fnRegex.FindStringSubmatch(*fn)
 		if len(matches) == 0 {
-			level.Debug(s.logger).Log("msg", "skipping non-alb log file", "key", *fn)
+			s.logger.Debug("skipping non-alb log file", "key", *fn)
 			continue
 		}
 		if err := s.parseFile(ctx, *fn, matches[fnRegex.SubexpIndex("account_id")], matches[fnRegex.SubexpIndex("id")]); err != nil {
-			level.Error(s.logger).Log("msg", "failed to ship file", "key", *fn, "err", err)
+			s.logger.Error("failed to ship file", "key", *fn, "err", err)
 			return err // pod restart instead of deletion of not-shipped file
 		}
 
@@ -131,7 +130,7 @@ func (s *Parser) worker() error {
 			Bucket: &s.opts.BucketName,
 			Key:    fn,
 		}); err != nil {
-			level.Error(s.logger).Log("msg", "failed to delete file", "key", *fn, "err", err)
+			s.logger.Error("failed to delete file", "key", *fn, "err", err)
 		}
 	}
 	return nil
@@ -154,7 +153,7 @@ func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string)
 	for k, v := range s.opts.Labels {
 		labels[k] = v
 	}
-	b := newBatch(labels, s.opts, &s.logger)
+	b := newBatch(labels, s.opts, s.logger)
 
 	obj, err := s.s3Client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: &s.opts.BucketName,
@@ -162,7 +161,7 @@ func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string)
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "NoSuchKey") {
-			level.Debug(s.logger).Log("msg", "skipping non-existent file", "key", fn)
+			s.logger.Debug("skipping non-existent file", "key", fn)
 			return nil
 		}
 		return fmt.Errorf("failed to get object %s: %w", fn, err)
@@ -182,12 +181,12 @@ func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string)
 		logLine := scanner.Text()
 		matches := tsRegex.FindStringSubmatch(logLine)
 		if len(matches) == 0 {
-			level.Error(s.logger).Log("msg", "skipping log line without a timestamp", "line", logLine)
+			s.logger.Error("skipping log line without a timestamp", "line", logLine)
 			continue
 		}
 		timestamp, err := time.Parse(time.RFC3339, matches[1])
 		if err != nil {
-			level.Error(s.logger).Log("msg", "skipping log line with invalid timestamp", "line", logLine, "err", err)
+			s.logger.Error("skipping log line with invalid timestamp", "line", logLine, "err", err)
 			continue
 		}
 		switch s.opts.Format {
@@ -209,7 +208,7 @@ func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string)
 	if err = b.flush(); err != nil {
 		return fmt.Errorf("failed to flush batch: %w", err)
 	}
-	level.Debug(s.logger).Log("msg", "shipped file", "key", fn, "labels", fmt.Sprintf("%v", labels), "lines", lineCount, "time", time.Since(start), "lines/s", fmt.Sprintf("%.2f", float64(lineCount)/time.Since(start).Seconds()))
+	s.logger.Debug("shipped file", "key", fn, "labels", fmt.Sprintf("%v", labels), "lines", lineCount, "time", time.Since(start), "lines/s", fmt.Sprintf("%.2f", float64(lineCount)/time.Since(start).Seconds()))
 	return nil
 }
 

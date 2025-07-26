@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -13,8 +14,6 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/golang/snappy"
 	"github.com/grafana/dskit/backoff"
 	"github.com/grafana/loki/v3/pkg/logproto"
@@ -33,7 +32,7 @@ type batch struct {
 	client *lokiClient
 }
 
-func newBatch(labels map[string]string, opts Options, logger *log.Logger) *batch {
+func newBatch(labels map[string]string, opts Options, logger *slog.Logger) *batch {
 	ls := make([]string, 0, len(labels))
 	for l, v := range labels {
 		ls = append(ls, fmt.Sprintf("%s=%q", l, v))
@@ -91,16 +90,16 @@ func (b *batch) encode() ([]byte, error) {
 
 type lokiClient struct {
 	http         *http.Client
-	log          *log.Logger
+	logger       *slog.Logger
 	LokiURL      string
 	LokiUser     string
 	LokiPassword string
 }
 
-func newLokiClient(lokiURL, lokiUser, lokiPassword string, logger *log.Logger) *lokiClient {
+func newLokiClient(lokiURL, lokiUser, lokiPassword string, logger *slog.Logger) *lokiClient {
 	return &lokiClient{
 		http:         &http.Client{},
-		log:          logger,
+		logger:       logger,
 		LokiURL:      lokiURL,
 		LokiUser:     lokiUser,
 		LokiPassword: lokiPassword,
@@ -122,7 +121,7 @@ func (c *lokiClient) send(buf []byte) error {
 		if status > 0 && status != 429 && status/100 != 5 {
 			break
 		}
-		level.Error(*c.log).Log("err", fmt.Errorf("error sending batch, will retry, status: %d error: %s", status, err))
+		c.logger.Error("err", fmt.Errorf("error sending batch, will retry, status: %d error: %s", status, err))
 		backoff.Wait()
 
 		// Make sure it sends at least once before checking for retry.

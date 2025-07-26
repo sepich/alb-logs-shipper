@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,8 +14,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/go-kit/log"
-	"github.com/go-kit/log/level"
 	"github.com/prometheus/common/version"
 	"github.com/spf13/pflag"
 )
@@ -50,23 +49,20 @@ func main() {
 		fmt.Println(version.Print("alb-logs-shipper"))
 		os.Exit(0)
 	}
-
-	logger := log.NewLogfmtLogger(os.Stdout)
-	logger = level.NewFilter(logger, level.Allow(level.ParseDefault(*logLevel, level.InfoValue())))
-	logger = log.With(logger, "caller", log.DefaultCaller)
+	logger := getLogger(*logLevel)
 
 	if opts.BucketName == "" {
-		level.Error(logger).Log("msg", "--bucket-name is required")
+		logger.Error("--bucket-name is required")
 		os.Exit(1)
 	}
 
 	if opts.LokiURL == "" {
-		level.Error(logger).Log("msg", "--loki-url is required")
+		logger.Error("--loki-url is required")
 		os.Exit(1)
 	}
 
 	if opts.LokiUser != "" && os.Getenv("LOKI_PASSWORD") == "" {
-		level.Error(logger).Log("msg", "LOKI_PASSWORD environment variable is required")
+		logger.Error("LOKI_PASSWORD environment variable is required")
 		os.Exit(1)
 	}
 	opts.LokiPassword = os.Getenv("LOKI_PASSWORD")
@@ -74,7 +70,7 @@ func main() {
 	for _, label := range *labels {
 		parts := strings.SplitN(label, "=", 2)
 		if len(parts) < 2 || len(parts[0]) == 0 || len(parts[1]) == 0 {
-			level.Error(logger).Log("msg", "invalid label format (k=v)", "label", label)
+			logger.Error("invalid label format (k=v)", "label", label)
 			os.Exit(1)
 		}
 		opts.Labels[parts[0]] = parts[1]
@@ -84,16 +80,16 @@ func main() {
 	for _, role := range *roles {
 		id := strings.Split(role, ":")
 		if len(id) != 6 {
-			level.Error(logger).Log("msg", "invalid role ARN", "role", role)
+			logger.Error("invalid role ARN", "role", role)
 			os.Exit(1)
 		}
 		roleMap[id[4]] = role
 	}
 
-	level.Info(logger).Log("msg", "Starting alb-logs-shipper", "version", version.Version, "metrics-port", opts.Port)
+	logger.Info("Starting alb-logs-shipper", "version", version.Version, "metrics-port", opts.Port)
 	cfg, err := config.LoadDefaultConfig(context.TODO())
 	if err != nil {
-		level.Error(logger).Log("msg", "unable to load AWS SDK config", "err", err)
+		logger.Error("unable to load AWS SDK config", "err", err)
 		os.Exit(1)
 	}
 
@@ -111,12 +107,12 @@ func main() {
 			case <-waitTimer.C:
 				waitTimer.Reset(opts.WaitInterval)
 				if err := parser.scan(); err != nil {
-					level.Error(logger).Log("msg", "scan S3 failed", "err", err)
+					logger.Error("scan S3 failed", "err", err)
 					parser.Stop()
 					return
 				}
 			case <-sgnl:
-				level.Info(logger).Log("msg", "received SIGINT or SIGTERM, shutting down...")
+				logger.Info("received SIGINT or SIGTERM, shutting down...")
 				parser.Stop()
 				return
 			}
@@ -126,7 +122,7 @@ func main() {
 	go func() {
 		http.Handle("/metrics", parser.metrics())
 		if err := http.ListenAndServe(fmt.Sprintf(":%d", opts.Port), nil); err != nil {
-			level.Error(logger).Log("msg", "metrics server failed", "err", err)
+			logger.Error("metrics server failed", "err", err)
 			parser.Stop()
 		}
 	}()
@@ -142,4 +138,30 @@ func main() {
 		}()
 	}
 	wg.Wait()
+}
+
+func getLogger(logLevel string) *slog.Logger {
+	var l = slog.LevelInfo
+	if logLevel == "debug" {
+		l = slog.LevelDebug
+	}
+	return slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level:     l,
+		AddSource: logLevel == "debug",
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey && len(groups) == 0 {
+				return slog.Attr{}
+			}
+			if a.Key == slog.SourceKey {
+				s := a.Value.String()
+				i := strings.LastIndex(s, "/")
+				j := strings.LastIndex(s, " ")
+				a.Value = slog.StringValue(s[i+1:j] + ":" + s[j+1:len(s)-1])
+			}
+			if a.Key == slog.LevelKey {
+				a.Value = slog.StringValue(strings.ToLower(a.Value.String()))
+			}
+			return a
+		},
+	}))
 }
