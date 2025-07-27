@@ -109,7 +109,7 @@ func (s *Parser) scan() error {
 		num++
 	}
 	if num > 0 {
-		s.logger.Info("new files", "found", num, "time", time.Since(start), "queue", len(s.queue))
+		s.logger.Info("new files", "found", num, "duration", time.Since(start), "queue", len(s.queue))
 	}
 	return nil
 }
@@ -194,7 +194,7 @@ func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string)
 	if err = b.flush(); err != nil {
 		return fmt.Errorf("failed to flush batch: %w", err)
 	}
-	s.logger.Debug("shipped file", "key", fn, "labels", fmt.Sprintf("%v", labels), "lines", lineCount, "time", time.Since(start), "lines/s", fmt.Sprintf("%.2f", float64(lineCount)/time.Since(start).Seconds()))
+	s.logger.Debug("shipped file", "key", fn, "labels", fmt.Sprintf("%v", labels), "lines", lineCount, "duration", time.Since(start), "lines/s", fmt.Sprintf("%.2f", float64(lineCount)/time.Since(start).Seconds()))
 	return nil
 }
 
