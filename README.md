@@ -120,7 +120,19 @@ cons:
 - separate execution per-file means we cannot cache ALB tags between runs and would hit API for each file
 - log files could be massive for loaded LB, and with retries time to process the file could? hit lambda execution limit (15m) 
 - missed logs on non-delivered events, or on temporary problems with loki because no second lambda execution for old events would be done. Probably could be solved by SQS with ACK, or additional cron lambda which processes the whole bucket.
- 
+
+### RegExp is slow
+Here is a comparison of regexp (as in `lambda-promtail`) and custom parsing:
+```bash
+$ make bench 
+BenchmarkLineRegex_AsLogfmt-16             42078             28971 ns/op            2616 B/op         18 allocs/op
+BenchmarkLineRegex_AsJson-16               41798             28651 ns/op            2419 B/op         15 allocs/op
+BenchmarkLineSlice_AsLogfmt-16            496107              2536 ns/op            2584 B/op         22 allocs/op
+BenchmarkLineSlice_AsJson-16              414213              2915 ns/op            2392 B/op         19 allocs/op
+PASS
+ok      github.com/sepich/alb-logs-shipper      5.159s
+```
+
 ### TODO
 - The tag `ingress.k8s.aws/stack` is set to `namespace/ingressname` only for an implicit IngressGroup. When the IngressGroup is set on Ingress, there is no way to get ns/ingressname. Dynamic placeholders are not supported in `--default-tags` of alb controller. Need to use mutation for Ingress objects adding `alb.ingress.kubernetes.io/tags` annotation with ns/ingressname.
 - When alb-ingress is deleted, ALB is removed and then final logs appear later in S3. At this point, alb-shipper should use cached info to set the correct labels for logs. If alb-shipper was restarted after ALB is removed and before logs appear in S3, it has no way to get ALB tags anymore. To prevent data loss, it would exit with error instead of deleting the non-shipped logs. In this case, files should be reviewed and deleted manually:

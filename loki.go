@@ -121,7 +121,7 @@ func (c *lokiClient) send(buf []byte) error {
 		if status > 0 && status != 429 && status/100 != 5 {
 			break
 		}
-		c.logger.Error("err", fmt.Errorf("error sending batch, will retry, status: %d error: %s", status, err))
+		c.logger.Error("error sending batch, will retry", "status", status, "err", err)
 		backoff.Wait()
 
 		// Make sure it sends at least once before checking for retry.

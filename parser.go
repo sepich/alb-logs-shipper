@@ -20,7 +20,7 @@ var (
 	// example: my-bucket/AWSLogs/123456789012/elasticloadbalancing/us-east-1/2022/01/24/123456789012_elasticloadbalancing_us-east-1_app.my-loadbalancer.b13ea9d19f16d015_20220124T0000Z_0.0.0.0_2et2e1mx.log.gz
 	fnRegex    = regexp.MustCompile(`AWSLogs\/(?P<account_id>\d+)\/elasticloadbalancing\/(?P<region>[\w-]+)\/(?P<year>\d+)\/(?P<month>\d+)\/(?P<day>\d+)\/\d+\_elasticloadbalancing_(?:\w+-\w+-(?:\w+-)?\d)_app\.(?P<id>[a-zA-Z0-9\-]+)\..+\.log\.gz`)
 	tsRegex    = regexp.MustCompile(`(?P<timestamp>\d+-\d+-\d+T\d+:\d+:\d+(?:\.\d+Z)?)`)
-	evRegex    = regexp.MustCompile(`(?P<type>\S+) (?P<time>\S+) (?P<elb>\S+) (?P<client>\S+) (?P<target>\S+) (?P<request_processing_time>\S+) (?P<target_processing_time>\S+) (?P<response_processing_time>\S+) (?P<elb_status_code>\S+) (?P<target_status_code>\S+) (?P<received_bytes>\S+) (?P<sent_bytes>\S+) "(?P<request>.+)" "(?P<user_agent>.*)" (?P<ssl_cipher>\S+) (?P<ssl_protocol>\S+) (?P<target_group_arn>\S+) "(?P<trace_id>.+)" "(?P<domain_name>.+)" "(?P<chosen_cert_arn>.+)" (?P<matched_rule_priority>\S+) (?P<request_creation_time>\S+) "(?P<actions_executed>.+)" "(?P<redirect_url>.+)" "(?P<error_reason>.+)" "(?P<targets>.+)" "(?P<target_status_code_list>.+)" "(?P<classification>.+)" "(?P<classification_reason>.+)" (?P<conn_trace_id>\S+)`)
+	evRegex    = regexp.MustCompile(`(?P<type>\S+) (?P<time>\S+) (?P<elb>\S+) (?P<client>\S+) (?P<target>\S+) (?P<request_processing_time>\S+) (?P<target_processing_time>\S+) (?P<response_processing_time>\S+) (?P<elb_status_code>\S+) (?P<target_status_code>\S+) (?P<received_bytes>\S+) (?P<sent_bytes>\S+) (?P<request>".+") (?P<user_agent>".*") (?P<ssl_cipher>\S+) (?P<ssl_protocol>\S+) (?P<target_group_arn>\S+) (?P<trace_id>".+") (?P<domain_name>".+") (?P<chosen_cert_arn>".+") (?P<matched_rule_priority>\S+) (?P<request_creation_time>\S+) (?P<actions_executed>".+") (?P<redirect_url>".+") (?P<error_reason>".+") (?P<targets>".+") (?P<target_status_code_list>".+") (?P<classification>".+") (?P<classification_reason>".+") (?P<conn_trace_id>\S+)`)
 	skipFields = map[string]bool{
 		"chosen_cert_arn":         true, // hardcoded in ingress
 		"target_group_arn":        true, // not configured directly
@@ -64,6 +64,7 @@ type Parser struct {
 	logger   *slog.Logger
 	queue    chan *string
 	stop     bool
+	line     LineParser
 }
 
 func NewParser(opts Options, elbMeta *ELBMeta, s3Client *s3.Client, logger *slog.Logger) *Parser {
@@ -73,6 +74,7 @@ func NewParser(opts Options, elbMeta *ELBMeta, s3Client *s3.Client, logger *slog
 		s3Client: s3Client,
 		logger:   logger,
 		queue:    make(chan *string, 10*opts.Workers),
+		line:     &LineSlice{},
 	}
 	return parser
 }
@@ -178,27 +180,11 @@ func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string)
 	scanner := bufio.NewScanner(gzreader)
 	for scanner.Scan() {
 		lineCount++
-		logLine := scanner.Text()
-		matches := tsRegex.FindStringSubmatch(logLine)
-		if len(matches) == 0 {
-			s.logger.Error("skipping log line without a timestamp", "line", logLine)
-			continue
-		}
-		timestamp, err := time.Parse(time.RFC3339, matches[1])
-		if err != nil {
-			s.logger.Error("skipping log line with invalid timestamp", "line", logLine, "err", err)
-			continue
-		}
-		switch s.opts.Format {
-		case "logfmt":
-			logLine, err = toLogfmt(logLine)
-		case "json":
-			logLine, err = toJSON(logLine)
-		}
+		ts, logLine, err := s.line.As(s.opts.Format, scanner.Text())
 		if err != nil {
 			return err
 		}
-		if err = b.add(timestamp, logLine); err != nil {
+		if err = b.add(*ts, logLine); err != nil {
 			return fmt.Errorf("failed to send batch: %w", err)
 		}
 	}
@@ -210,47 +196,6 @@ func (s *Parser) parseFile(ctx context.Context, fn string, accountID, lb string)
 	}
 	s.logger.Debug("shipped file", "key", fn, "labels", fmt.Sprintf("%v", labels), "lines", lineCount, "time", time.Since(start), "lines/s", fmt.Sprintf("%.2f", float64(lineCount)/time.Since(start).Seconds()))
 	return nil
-}
-
-// toLogfmt converts a ALB log line to logfmt format
-func toLogfmt(line string) (string, error) {
-	matches := evRegex.FindStringSubmatch(line)
-	if len(matches) == 0 {
-		return "", fmt.Errorf("failed to parse log line: %s", line)
-	}
-	res := []string{}
-	for i, name := range evRegex.SubexpNames()[1:] {
-		if skipFields[name] {
-			continue // drop non relevant for EKS ALB
-		}
-		if quoteFields[name] {
-			res = append(res, fmt.Sprintf("%s=%q", name, matches[i+1]))
-		} else {
-			res = append(res, fmt.Sprintf("%s=%s", name, matches[i+1]))
-		}
-	}
-	return strings.Join(res, " "), nil
-}
-
-// toJSON converts a ALB log line to JSON format
-func toJSON(line string) (string, error) {
-	matches := evRegex.FindStringSubmatch(line)
-	if len(matches) == 0 {
-		return "", fmt.Errorf("failed to parse log line: %s", line)
-	}
-	res := []string{}
-	for i, name := range evRegex.SubexpNames()[1:] {
-		if skipFields[name] {
-			continue // drop non relevant for EKS ALB
-		}
-		if numFields[name] {
-			res = append(res, fmt.Sprintf("%q:%s", name, matches[i+1]))
-		} else {
-			res = append(res, fmt.Sprintf("%q:%q", name, matches[i+1]))
-		}
-	}
-
-	return "{" + strings.Join(res, ",") + "}", nil
 }
 
 func (s *Parser) metrics() http.Handler {
